@@ -24,15 +24,9 @@ if not CHAT_ID:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 # ================== COINS ==================
-MANUAL_TOP_50 = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT",
-    "AVAXUSDT", "TRXUSDT", "LINKUSDT", "MATICUSDT", "DOTUSDT", "LTCUSDT", "SHIBUSDT",
-    "UNIUSDT", "NEARUSDT", "AAVEUSDT", "ATOMUSDT", "SUIUSDT", "PEPEUSDT", "FLOKIUSDT",
-    "WIFUSDT", "SEIUSDT", "BONKUSDT", "ARBUSDT", "OPUSDT", "TIAUSDT", "ENSUSDT",
-    "RUNEUSDT", "FTMUSDT", "GALAUSDT", "MEMEUSDT", "PYTHUSDT", "1000SATSUSDT",
-    "JUPUSDT", "ORDIUSDT", "NOTUSDT", "WLDUSDT", "ETCUSDT", "HBARUSDT", "ICPUSDT",
-    "BCHUSDT", "SANDUSDT", "MANAUSDT", "EGLDUSDT", "FILUSDT", "XLMUSDT", "ALGOUSDT",
-    "IMXUSDT", "APTUSDT",
+MANUAL_TOP_10 = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "TRXUSDT", "LINKUSDT",
 ]
 
 TIMEFRAMES = {"1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w"}
@@ -40,7 +34,7 @@ DATA_FILE = "last_signals.json"
 
 # ================== BINANCE HELPERS ==================
 
-def fetch_top_volume_pairs(limit: int = 20) -> list[str]:
+def fetch_top_volume_pairs(limit: int = 30) -> list[str]:
     """Top N USDT perpetual symbols by 24h quote volume."""
     url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
     try:
@@ -58,10 +52,10 @@ def fetch_top_volume_pairs(limit: int = 20) -> list[str]:
 
 
 def load_symbols() -> list[str]:
-    manual = set(MANUAL_TOP_50)
-    top_vol = set(fetch_top_volume_pairs(20))
+    manual = set(MANUAL_TOP_10)
+    top_vol = set(fetch_top_volume_pairs(30))
     combined = sorted(list(manual | top_vol))
-    logging.info("✅ Loaded %s symbols (Top 50 + Top 20 by volume).", len(combined))
+    logging.info("✅ Loaded %s symbols (Top 10 + Top 30 by volume).", len(combined))
     return combined
 
 
@@ -296,7 +290,7 @@ def key_for(symbol: str, tf: str) -> str:
 
 
 # ================== GLOBALS ==================
-TOP_VOLUME_SYMBOLS = set(fetch_top_volume_pairs(20))
+TOP_VOLUME_SYMBOLS = set(fetch_top_volume_pairs(30))
 SYMBOLS = load_symbols()
 LAST_SIGNALS = load_last_signals()
 
@@ -307,9 +301,9 @@ def volume_tag(symbol: str) -> str:
 
 def refresh_pairs(context: CallbackContext):
     global SYMBOLS, TOP_VOLUME_SYMBOLS
-    logging.info("🔄 Refreshing symbol list (Top 50 + Top 20)...")
+    logging.info("🔄 Refreshing symbol list (Top 10 + Top 30)...")
     new_symbols = load_symbols()
-    TOP_VOLUME_SYMBOLS = set(fetch_top_volume_pairs(20))
+    TOP_VOLUME_SYMBOLS = set(fetch_top_volume_pairs(30))
     added = set(new_symbols) - set(SYMBOLS)
     removed = set(SYMBOLS) - set(new_symbols)
     SYMBOLS = new_symbols
@@ -478,10 +472,10 @@ def cmd_statusvolume(update, context):
     if not TOP_VOLUME_SYMBOLS:
         return update.message.reply_text("⚠️ No top volume data available yet.")
 
-    msg = "🔥 *Top 20 High-Volume Coins Currently Monitored*\n\n"
+    msg = "🔥 *Top 30 High-Volume Coins Currently Monitored*\n\n"
     for i, sym in enumerate(sorted(list(TOP_VOLUME_SYMBOLS)), 1):
         msg += f"{i:02d}. {sym}\n"
-    msg += "\n♻️ This list refreshes automatically every 6 hours."
+    msg += "\n♻️ This list refreshes automatically every 4 hours."
     update.message.reply_text(msg, parse_mode="Markdown")
 
 
