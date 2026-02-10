@@ -116,10 +116,21 @@ def analyze_df(df: pd.DataFrame) -> dict:
 
     close, high, low = df["c"], df["h"], df["l"]
 
-    tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
-    kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
-    senkou_a = (tenkan + kijun) / 2
-    senkou_b = (high.rolling(52).max() + low.rolling(52).min()) / 2
+    # --- Future cloud bias (26 periods forward) ---
+    senkou_a_fwd = senkou_a.shift(26)
+    senkou_b_fwd = senkou_b.shift(26)
+
+    future_cloud_bullish = False
+    future_cloud_bearish = False
+
+    if last_idx - 26 >= 0:
+        future_a = senkou_a_fwd.iloc[last_idx]
+        future_b = senkou_b_fwd.iloc[last_idx]
+
+        if pd.notna(future_a) and pd.notna(future_b):
+            future_cloud_bullish = float(future_a) > float(future_b)
+            future_cloud_bearish = float(future_a) < float(future_b)
+
 
     delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
@@ -137,10 +148,15 @@ def analyze_df(df: pd.DataFrame) -> dict:
     cloud_a_current = float(senkou_a.iloc[cloud_idx])
     cloud_b_current = float(senkou_b.iloc[cloud_idx])
 
-    chikou_cloud_idx = last_idx - 52
-    ca, cb = float(senkou_a.iloc[chikou_cloud_idx]), float(senkou_b.iloc[chikou_cloud_idx])
-    chikou_above = price > max(ca, cb)
-    chikou_below = price < min(ca, cb)
+    # --- Chikou confirmation (correct alignment) ---
+    # Chikou is today's close plotted 26 bars back, so compare today's close to the cloud 26 bars back.
+    chikou_idx = last_idx - 26
+
+    chikou_cloud_a = float(senkou_a.iloc[chikou_idx])
+    chikou_cloud_b = float(senkou_b.iloc[chikou_idx])
+
+    chikou_above = price > max(chikou_cloud_a, chikou_cloud_b)
+    chikou_below = price < min(chikou_cloud_a, chikou_cloud_b)
 
     cloud_a_future, cloud_b_future = float(senkou_a.iloc[last_idx]), float(senkou_b.iloc[last_idx])
 
@@ -148,13 +164,13 @@ def analyze_df(df: pd.DataFrame) -> dict:
         ("Price above cloud", price > max(cloud_a_current, cloud_b_current)),
         ("Tenkan > Kijun", tenkan_v > kijun_v),
         ("Chikou above cloud", chikou_above),
-        ("Future cloud bullish", cloud_a_future > cloud_b_future),
+        ("Future cloud bullish", future_cloud_bullish),
     ]
     checklist_bear = [
         ("Price below cloud", price < min(cloud_a_current, cloud_b_current)),
         ("Tenkan < Kijun", tenkan_v < kijun_v),
         ("Chikou below cloud", chikou_below),
-        ("Future cloud bearish", cloud_a_future < cloud_b_future),
+        ("Future cloud bearish", future_cloud_bearish),
     ]
 
     bull_count = sum(v for _, v in checklist_bull)
