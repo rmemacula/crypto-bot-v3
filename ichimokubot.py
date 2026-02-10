@@ -1,3 +1,5 @@
+from typing import Optional
+
 import os
 import json
 import time
@@ -63,7 +65,7 @@ def load_symbols() -> list[str]:
     return combined
 
 
-def fetch_ohlcv(symbol: str, interval: str, limit: int = 150) -> pd.DataFrame | None:
+def fetch_ohlcv(symbol: str, interval: str, limit: int = 150) -> Optional[pd.DataFrame]:
     url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         r = requests.get(url, timeout=15)
