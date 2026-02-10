@@ -110,78 +110,118 @@ def detect_crt_on_last_pair(df: pd.DataFrame) -> dict:
 
 
 def analyze_df(df: pd.DataFrame) -> dict:
+    # Needs enough candles for Ichimoku (52 + 26 shift) + stable RSI
     if df is None or len(df) < 104:
-        return {"signal": "Neutral", "price": None, "rsi": None, "bull_count": 0, "bear_count": 0,
-                "checklist_bull": [], "checklist_bear": [], "sl": None, "tp": None}
+        return {
+            "signal": "Neutral",
+            "price": None,
+            "rsi": None,
+            "bull_count": 0,
+            "bear_count": 0,
+            "checklist_bull": [],
+            "checklist_bear": [],
+            "sl": None,
+            "tp": None,
+        }
 
-    close, high, low = df["c"], df["h"], df["l"]
+    close = df["c"]
+    high = df["h"]
+    low = df["l"]
 
-    # --- Future cloud bias (26 periods forward) ---
-    senkou_a_fwd = senkou_a.shift(26)
-    senkou_b_fwd = senkou_b.shift(26)
+    # ----- Ichimoku core -----
+    tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
+    kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
 
-    future_cloud_bullish = False
-    future_cloud_bearish = False
+    # Unshifted Senkou series (we will index/shift as needed)
+    senkou_a = (tenkan + kijun) / 2
+    senkou_b = (high.rolling(52).max() + low.rolling(52).min()) / 2
 
-    if last_idx - 26 >= 0:
-        future_a = senkou_a_fwd.iloc[last_idx]
-        future_b = senkou_b_fwd.iloc[last_idx]
-
-        if pd.notna(future_a) and pd.notna(future_b):
-            future_cloud_bullish = float(future_a) > float(future_b)
-            future_cloud_bearish = float(future_a) < float(future_b)
-
-
+    # ----- RSI (14) -----
     delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
-    loss = -delta.where(delta < 0, 0).rolling(14).mean()
-    rsi = 100 - (100 / (1 + (gain / loss)))
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
 
-    last_idx = -2  # last closed candle
+    last_idx = -2  # last CLOSED candle (avoid using forming candle)
     price = float(close.iloc[last_idx])
-    rsi_val = float(rsi.iloc[last_idx]) if not np.isnan(rsi.iloc[last_idx]) else None
 
-    tenkan_v, kijun_v = float(tenkan.iloc[last_idx]), float(kijun.iloc[last_idx])
+    rsi_raw = rsi.iloc[last_idx]
+    rsi_val = float(rsi_raw) if pd.notna(rsi_raw) else None
 
-    # Cloud is plotted 26 forward; for "current" cloud vs price, compare to value 26 bars back
+    tenkan_raw = tenkan.iloc[last_idx]
+    kijun_raw = kijun.iloc[last_idx]
+    tenkan_v = float(tenkan_raw) if pd.notna(tenkan_raw) else None
+    kijun_v = float(kijun_raw) if pd.notna(kijun_raw) else None
+
+    # ----- "Current" cloud at current candle -----
+    # Cloud is plotted 26 periods forward, so to compare price NOW vs cloud,
+    # compare price at last_idx against senkou values at (last_idx - 26).
     cloud_idx = last_idx - 26
-    cloud_a_current = float(senkou_a.iloc[cloud_idx])
-    cloud_b_current = float(senkou_b.iloc[cloud_idx])
+    cloud_a_raw = senkou_a.iloc[cloud_idx]
+    cloud_b_raw = senkou_b.iloc[cloud_idx]
+    cloud_a_current = float(cloud_a_raw) if pd.notna(cloud_a_raw) else None
+    cloud_b_current = float(cloud_b_raw) if pd.notna(cloud_b_raw) else None
 
-    # --- Chikou confirmation (correct alignment) ---
-    # Chikou is today's close plotted 26 bars back, so compare today's close to the cloud 26 bars back.
+    price_above_cloud = (
+        cloud_a_current is not None
+        and cloud_b_current is not None
+        and price > max(cloud_a_current, cloud_b_current)
+    )
+    price_below_cloud = (
+        cloud_a_current is not None
+        and cloud_b_current is not None
+        and price < min(cloud_a_current, cloud_b_current)
+    )
+
+    # ----- Chikou vs cloud (correct alignment) -----
+    # Chikou = today's close plotted 26 back. So check today's close against cloud 26 back.
     chikou_idx = last_idx - 26
+    chikou_a_raw = senkou_a.iloc[chikou_idx]
+    chikou_b_raw = senkou_b.iloc[chikou_idx]
+    chikou_a = float(chikou_a_raw) if pd.notna(chikou_a_raw) else None
+    chikou_b = float(chikou_b_raw) if pd.notna(chikou_b_raw) else None
 
-    chikou_cloud_a = float(senkou_a.iloc[chikou_idx])
-    chikou_cloud_b = float(senkou_b.iloc[chikou_idx])
+    chikou_above = chikou_a is not None and chikou_b is not None and price > max(chikou_a, chikou_b)
+    chikou_below = chikou_a is not None and chikou_b is not None and price < min(chikou_a, chikou_b)
 
-    chikou_above = price > max(chikou_cloud_a, chikou_cloud_b)
-    chikou_below = price < min(chikou_cloud_a, chikou_cloud_b)
+    # ----- Future cloud bias (true 26-forward spans) -----
+    senkou_a_fwd = senkou_a.shift(26)
+    senkou_b_fwd = senkou_b.shift(26)
+    future_a_raw = senkou_a_fwd.iloc[last_idx]
+    future_b_raw = senkou_b_fwd.iloc[last_idx]
 
-    cloud_a_future, cloud_b_future = float(senkou_a.iloc[last_idx]), float(senkou_b.iloc[last_idx])
+    future_cloud_bullish = pd.notna(future_a_raw) and pd.notna(future_b_raw) and float(future_a_raw) > float(future_b_raw)
+    future_cloud_bearish = pd.notna(future_a_raw) and pd.notna(future_b_raw) and float(future_a_raw) < float(future_b_raw)
 
+    # ----- Checklist -----
     checklist_bull = [
-        ("Price above cloud", price > max(cloud_a_current, cloud_b_current)),
-        ("Tenkan > Kijun", tenkan_v > kijun_v),
+        ("Price above cloud", price_above_cloud),
+        ("Tenkan > Kijun", (tenkan_v is not None and kijun_v is not None and tenkan_v > kijun_v)),
         ("Chikou above cloud", chikou_above),
         ("Future cloud bullish", future_cloud_bullish),
     ]
     checklist_bear = [
-        ("Price below cloud", price < min(cloud_a_current, cloud_b_current)),
-        ("Tenkan < Kijun", tenkan_v < kijun_v),
+        ("Price below cloud", price_below_cloud),
+        ("Tenkan < Kijun", (tenkan_v is not None and kijun_v is not None and tenkan_v < kijun_v)),
         ("Chikou below cloud", chikou_below),
         ("Future cloud bearish", future_cloud_bearish),
     ]
 
-    bull_count = sum(v for _, v in checklist_bull)
-    bear_count = sum(v for _, v in checklist_bear)
+    bull_count = sum(bool(v) for _, v in checklist_bull)
+    bear_count = sum(bool(v) for _, v in checklist_bear)
 
-    signal, sl, tp = "Neutral", None, None
-    if bull_count >= 3:
+    # ----- Signal + simple SL/TP -----
+    signal = "Neutral"
+    sl = None
+    tp = None
+
+    if bull_count >= 3 and cloud_a_current is not None and cloud_b_current is not None:
         signal = "BUY"
         sl = min(cloud_a_current, cloud_b_current) * 0.995
         tp = price + 2 * (price - sl)
-    elif bear_count >= 3:
+
+    elif bear_count >= 3 and cloud_a_current is not None and cloud_b_current is not None:
         signal = "SELL"
         sl = max(cloud_a_current, cloud_b_current) * 1.005
         tp = price - 2 * (sl - price)
@@ -198,14 +238,15 @@ def analyze_df(df: pd.DataFrame) -> dict:
         "checklist_bear": checklist_bear,
         "sl": sl,
         "tp": tp,
-        "crt_bull": crt["bullish_crt"],
-        "crt_bear": crt["bearish_crt"],
-        "crt_prev_high": crt["prev_high"],
-        "crt_prev_low": crt["prev_low"],
-        "crt_curr_high": crt["curr_high"],
-        "crt_curr_low": crt["curr_low"],
-        "crt_curr_close": crt["curr_close"],
+        "crt_bull": crt.get("bullish_crt", False),
+        "crt_bear": crt.get("bearish_crt", False),
+        "crt_prev_high": crt.get("prev_high"),
+        "crt_prev_low": crt.get("prev_low"),
+        "crt_curr_high": crt.get("curr_high"),
+        "crt_curr_low": crt.get("curr_low"),
+        "crt_curr_close": crt.get("curr_close"),
     }
+
 
 
 def format_checklist(a: dict) -> str:
