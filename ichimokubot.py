@@ -463,7 +463,8 @@ def check_and_alert(context: CallbackContext):
                 elif sig == "SELL" and a.get("crt_bear"):
                     msg += "🕯️ *CRT Bearish ALIGNED!*\n\n"
                 msg += f"💰 *Price:* {a['price']:.4f}\n"
-                msg += f"📊 *RSI:* {a['rsi']:.2f}\n"
+                rsi = a.get("rsi")
+		msg += f"📊 *RSI:* {rsi:.2f}\n" if isinstance(rsi, (int, float)) else "📊 *RSI:* N/A\n"
                 msg += f"🔗 [View on TradingView]({tv})\n\n"
                 msg += format_checklist(a)
 
