@@ -174,22 +174,24 @@ def analyze_df(df: pd.DataFrame) -> dict:
         and price < min(cloud_a_current, cloud_b_current)
     )
 
-    # ----- Chikou vs cloud (correct alignment) -----
-    # Chikou = today's close plotted 26 back. So check today's close against cloud 26 back.
-    chikou_idx = last_idx - 26
-    chikou_a_raw = senkou_a.iloc[chikou_idx]
-    chikou_b_raw = senkou_b.iloc[chikou_idx]
+    # ----- Chikou vs cloud (FIXED) -----
+    # Chikou = today's close plotted 26 back
+    # Compare current price to the cloud at the position 26 periods back
+    # That cloud was projected from 52 periods back (26 + 26)
+    chikou_cloud_idx = last_idx - 52  # ✅ FIXED: Go back 52 total
+
+    chikou_a_raw = senkou_a.iloc[chikou_cloud_idx]
+    chikou_b_raw = senkou_b.iloc[chikou_cloud_idx]
     chikou_a = float(chikou_a_raw) if pd.notna(chikou_a_raw) else None
     chikou_b = float(chikou_b_raw) if pd.notna(chikou_b_raw) else None
 
     chikou_above = chikou_a is not None and chikou_b is not None and price > max(chikou_a, chikou_b)
     chikou_below = chikou_a is not None and chikou_b is not None and price < min(chikou_a, chikou_b)
 
-    # ----- Future cloud bias (true 26-forward spans) -----
-    senkou_a_fwd = senkou_a.shift(26)
-    senkou_b_fwd = senkou_b.shift(26)
-    future_a_raw = senkou_a_fwd.iloc[last_idx]
-    future_b_raw = senkou_b_fwd.iloc[last_idx]
+    # ----- Future cloud bias (FIXED) -----
+    # The cloud 26 periods ahead is represented by CURRENT Senkou calculations
+    future_a_raw = senkou_a.iloc[last_idx]  # ✅ FIXED: Use current, not shifted
+    future_b_raw = senkou_b.iloc[last_idx]
 
     future_cloud_bullish = pd.notna(future_a_raw) and pd.notna(future_b_raw) and float(future_a_raw) > float(future_b_raw)
     future_cloud_bearish = pd.notna(future_a_raw) and pd.notna(future_b_raw) and float(future_a_raw) < float(future_b_raw)
@@ -246,9 +248,6 @@ def analyze_df(df: pd.DataFrame) -> dict:
         "crt_curr_low": crt.get("curr_low"),
         "crt_curr_close": crt.get("curr_close"),
     }
-
-
-
 def format_checklist(a: dict) -> str:
     lines = []
     sig = a.get("signal")
