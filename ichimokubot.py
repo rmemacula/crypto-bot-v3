@@ -464,7 +464,7 @@ def check_and_alert(context: CallbackContext):
                     msg += "🕯️ *CRT Bearish ALIGNED!*\n\n"
                 msg += f"💰 *Price:* {a['price']:.4f}\n"
                 rsi = a.get("rsi")
-		msg += f"📊 *RSI:* {rsi:.2f}\n" if isinstance(rsi, (int, float)) else "📊 *RSI:* N/A\n"
+                msg += f"📊 *RSI:* {rsi:.2f}\n" if isinstance(rsi, (int, float)) else "📊 *RSI:* N/A\n"
                 msg += f"🔗 [View on TradingView]({tv})\n\n"
                 msg += format_checklist(a)
 
