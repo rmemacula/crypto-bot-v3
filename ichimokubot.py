@@ -440,10 +440,15 @@ def cmd_statusaligned(update, context):
     aligned_sells.sort(key=lambda x: (-len(x[1]), x[0]))
 
     buy_lines = [
-        f"🟩 *{sym}* — STRONG BUY aligned: *{', '.join(tfs)}*{volume_tag(sym)}" for sym, tfs in aligned_buys
+        f"🟩 *{sym}* — STRONG BUY aligned: *{', '.join(tfs)}*{volume_tag(sym)}\n"
+        f"🔗 [TradingView (1H)]({tradingview_link(sym, '1h')})"
+        for sym, tfs in aligned_buys
     ]
+
     sell_lines = [
-        f"🟥 *{sym}* — STRONG SELL aligned: *{', '.join(tfs)}*{volume_tag(sym)}" for sym, tfs in aligned_sells
+        f"🟥 *{sym}* — STRONG SELL aligned: *{', '.join(tfs)}*{volume_tag(sym)}\n"
+        f"🔗 [TradingView (1H)]({tradingview_link(sym, '1h')})"
+        for sym, tfs in aligned_sells
     ]
 
     def send_batches(lines, title):
