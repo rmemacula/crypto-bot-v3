@@ -707,15 +707,25 @@ def check_and_alert(context: CallbackContext):
     # 5) Send in batches + persist
     # ----------------------------
     if aligned_cards:
-        batch_size = 5
-        for i in range(0, len(aligned_cards), batch_size):
-            batch = aligned_cards[i : i + batch_size]
-            header = f"📌 *AUTO /statusaligned (>=2 TFs)* — 1H close: {tick_close_str}\n\n"
-            text = header + "\n\n".join(batch)
-            try:
-                bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown", disable_web_page_preview=True)
-            except Exception as e:
-                logging.error("Failed to send aligned batch: %s", e)
+    for msg in aligned_cards:
+        full_msg = (
+            f"📌 *AUTO /statusaligned (>=2 TFs)* — 1H close: {tick_close_str}\n\n"
+            + msg
+        )
+        try:
+            bot.send_message(
+                chat_id=CHAT_ID,
+                text=full_msg,
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+            )
+            time.sleep(0.5)  # small delay to avoid Telegram flood
+        except Exception as e:
+            logging.error("Failed to send aligned alert: %s", e)
+
+    save_last_signals(LAST_SIGNALS)
+    logging.info("✅ Sent %d separate aligned alerts.", len(aligned_cards))
+
 
         save_last_signals(LAST_SIGNALS)
         logging.info("✅ Auto aligned scan sent %d alerts.", len(aligned_cards))
