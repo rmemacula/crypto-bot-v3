@@ -50,27 +50,6 @@ def fetch_top_volume_pairs(limit: int = 30) -> list[str]:
         logging.error("Error fetching top volume pairs: %s", e)
         return []
 
-TF_MS = {
-    "1h": 60 * 60 * 1000,
-    "4h": 4 * 60 * 60 * 1000,
-    "1d": 24 * 60 * 60 * 1000,
-}
-
-def candle_open_time_ms(df: pd.DataFrame, closed: bool = True) -> Optional[int]:
-    """
-    closed=True -> last CLOSED candle open time (df[-2])
-    closed=False -> current FORMING candle open time (df[-1])
-    """
-    if df is None or len(df) < 2:
-        return None
-    idx = -2 if closed else -1
-    return int(df.iloc[idx]["time"])
-
-def candle_close_time_ms(open_ms: int, tf_label: str) -> int:
-    return int(open_ms + TF_MS[tf_label])
-
-def fmt_ms(ms: int, tz=timezone(timedelta(hours=8))) -> str:
-    return datetime.fromtimestamp(ms / 1000, tz=tz).strftime("%Y-%m-%d %I:%M %p")
 
 def load_symbols() -> list[str]:
     manual = set(MANUAL_TOP_10)
@@ -137,7 +116,6 @@ def analyze_df(df: pd.DataFrame) -> dict:
             "checklist_bear": [],
             "sl": None,
             "tp": None,
-            "kijun_live": None,  # ✅ add
         }
 
     close = df["c"]
@@ -169,9 +147,6 @@ def analyze_df(df: pd.DataFrame) -> dict:
     kijun_raw = kijun.iloc[last_idx]
     tenkan_v = float(tenkan_raw) if pd.notna(tenkan_raw) else None
     kijun_v = float(kijun_raw) if pd.notna(kijun_raw) else None
-    kijun_live_raw = kijun.iloc[-1]  # ✅ forming candle kijun
-    kijun_live = float(kijun_live_raw) if pd.notna(kijun_live_raw) else None
-
 
     # ----- "Current" cloud at current candle -----
     # Cloud is plotted 26 periods forward, so to compare price NOW vs cloud,
@@ -259,7 +234,6 @@ def analyze_df(df: pd.DataFrame) -> dict:
         "checklist_bear": checklist_bear,
         "sl": sl,
         "tp": tp,
-        "kijun_live": kijun_live,  # ✅ add
         "crt_bull": crt.get("bullish_crt", False),
         "crt_bear": crt.get("bearish_crt", False),
         "crt_prev_high": crt.get("prev_high"),
@@ -314,89 +288,7 @@ def save_last_signals(data: dict) -> None:
 def key_for(symbol: str, tf: str) -> str:
     return f"{symbol}_{tf}"
 
-def kijun_touch_key(symbol: str, tf: str, direction: str) -> str:
-    # direction = "BUY" or "SELL" to avoid confusion if direction flips later
-    return f"{symbol}_{tf}_KIJUN_TOUCH_{direction}"
 
-def current_candle_open_time_ms(df: pd.DataFrame) -> Optional[int]:
-    if df is None or len(df) < 2:
-        return None
-    return int(df.iloc[-1]["time"])  # candle OPEN time in ms
-
-def is_kijun_hit_intrabar(df: pd.DataFrame, kijun_live: Optional[float]) -> bool:
-    """
-    LIVE touch: current candle (forming) high/low contains live kijun value.
-    """
-    if df is None or len(df) < 2 or kijun_live is None:
-        return False
-    curr = df.iloc[-1]
-    hi = float(curr["h"])
-    lo = float(curr["l"])
-    k = float(kijun_live)
-    return lo <= k <= hi
-
-def live_price(df: pd.DataFrame) -> Optional[float]:
-    if df is None or len(df) < 1:
-        return None
-    return float(df.iloc[-1]["c"])
-
-def aligned_strong_min2(symbol: str) -> Optional[dict]:
-    """
-    Returns dict if >=2 of (1h, 4h, 1d) are STRONG 4/4 in the SAME direction.
-    """
-    need = [("1h", TIMEFRAMES["1h"]), ("4h", TIMEFRAMES["4h"]), ("1d", TIMEFRAMES["1d"])]
-    strong = {}  # tf_label -> info
-
-    for tf_label, interval in need:
-        df = fetch_ohlcv(symbol, interval)
-        if df is None or len(df) < 104:
-            continue
-
-        a = analyze_df(df)
-        sig = a.get("signal")
-
-        is_strong_buy = sig == "BUY" and a.get("bull_count", 0) == 4
-        is_strong_sell = sig == "SELL" and a.get("bear_count", 0) == 4
-        if not (is_strong_buy or is_strong_sell):
-            continue
-
-        open_ms = candle_open_time_ms(df, closed=True)  # last CLOSED candle open
-        if open_ms is None:
-            continue
-        close_ms = candle_close_time_ms(open_ms, tf_label)
-
-        strong[tf_label] = {
-            "signal": sig,          # BUY/SELL
-            "analysis": a,          # analysis object for that TF
-            "open_ms": open_ms,
-            "close_ms": close_ms,
-        }
-
-    if len(strong) < 2:
-        return None
-
-    # Pick direction that has >=2 strong TFs
-    buys = [tf for tf, v in strong.items() if v["signal"] == "BUY"]
-    sells = [tf for tf, v in strong.items() if v["signal"] == "SELL"]
-
-    if len(buys) >= 2 and len(buys) > len(sells):
-        direction = "BUY"
-        aligned_tfs = sorted(buys)
-    elif len(sells) >= 2 and len(sells) > len(buys):
-        direction = "SELL"
-        aligned_tfs = sorted(sells)
-    elif len(buys) >= 2 and len(sells) >= 2 and len(buys) == len(sells):
-        # ambiguous (2 BUY + 2 SELL can't happen here since max is 3 TFs, but keep it safe)
-        return None
-    else:
-        return None
-
-    return {
-        "symbol": symbol,
-        "direction": direction,
-        "aligned_tfs": aligned_tfs,  # e.g. ["1h","4h"] or ["1h","4h","1d"]
-        "tfs": strong,              # contains info for each TF that is strong
-    }
 # ================== GLOBALS ==================
 TOP_VOLUME_SYMBOLS = set(fetch_top_volume_pairs(30))
 SYMBOLS = load_symbols()
@@ -595,132 +487,77 @@ def cmd_statusvolume(update, context):
 # ================== ALERT JOB ==================
 
 def check_and_alert(context: CallbackContext):
-    """
-    ALERT JOB (FINAL):
-    - Runs frequently (e.g., every 30s) but ONLY does work once per NEW 1H candle (i.e., at 1H close).
-    - Sends alerts ONLY for /statusaligned-style alignment (>=2 TFs out of 1H/4H/1D are STRONG 4/4 and SAME direction).
-    - Alerts when:
-        * First time aligned
-        * Direction flips (BUY<->SELL)
-        * Alignment improves (2 TFs -> 3 TFs)
-    - No more per-timeframe alerts (1h/4h/1d/1w).
-    """
-    global LAST_SIGNALS, SYMBOLS
+    global LAST_SIGNALS
 
     bot = context.bot
-    manila_tz = timezone(timedelta(hours=8))
+    changes = {}
+    messages_sent = 0
 
-    # ----------------------------
-    # 1) Gate: run only once per new 1H candle
-    # ----------------------------
-    df_ref = fetch_ohlcv("BTCUSDT", TIMEFRAMES["1h"], limit=3)
-    if df_ref is None or len(df_ref) < 3:
-        return
+    for symbol in SYMBOLS:
+        for tf_label, interval in TIMEFRAMES.items():
+            df = fetch_ohlcv(symbol, interval)
+            if df is None or len(df) < 104:
+                continue
 
-    # New 1H candle open time (forming candle). When this changes, the previous 1H closed.
-    current_1h_open_ms = int(df_ref.iloc[-1]["time"])
-    scan_key = "__LAST_1H_OPEN_SCANNED__"
-    last_scanned = LAST_SIGNALS.get(scan_key)
+            a = analyze_df(df)
+            sig = a["signal"]
+            k = key_for(symbol, tf_label)
 
-    if last_scanned == current_1h_open_ms:
-        return  # still same 1H candle, do nothing
+            crt_tag = "CRT_BULL" if a.get("crt_bull") else ("CRT_BEAR" if a.get("crt_bear") else "CRT_NONE")
+            sent_label = f"{sig}|{a.get('bull_count',0)}|{a.get('bear_count',0)}|{crt_tag}"
+            prev = LAST_SIGNALS.get(k)
 
-    # Mark scanned (so we don't scan again until next 1H candle)
-    LAST_SIGNALS[scan_key] = current_1h_open_ms
-    save_last_signals(LAST_SIGNALS)
+            is_strong = (sig == "BUY" and a.get("bull_count", 0) == 4) or (sig == "SELL" and a.get("bear_count", 0) == 4)
 
-    # The 1H close time that triggered this scan = new candle open time
-    tick_close_ms = current_1h_open_ms
-    tick_close_str = datetime.fromtimestamp(tick_close_ms / 1000, tz=manila_tz).strftime("%Y-%m-%d %I:%M %p")
+            # Strong entries
+            if is_strong and prev != sent_label:
+                tv = tradingview_link(symbol, tf_label)
+                msg = f"🚨 *{symbol}* ({tf_label}) — *{sig} (4/4 confirmed)*{volume_tag(symbol)}\n\n"
+                if sig == "BUY" and a.get("crt_bull"):
+                    msg += "🕯️ *CRT Bullish ALIGNED!*\n\n"
+                elif sig == "SELL" and a.get("crt_bear"):
+                    msg += "🕯️ *CRT Bearish ALIGNED!*\n\n"
+                msg += f"💰 *Price:* {a['price']:.4f}\n"
+                rsi = a.get("rsi")
+                msg += f"📊 *RSI:* {rsi:.2f}\n" if isinstance(rsi, (int, float)) else "📊 *RSI:* N/A\n"
+                msg += f"🔗 [View on TradingView]({tv})\n\n"
+                msg += format_checklist(a)
 
-    logging.info("⏰ 1H candle closed at %s — running AUTO /statusaligned (>=2 TFs)...", tick_close_str)
+                try:
+                    bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
+                    messages_sent += 1
+                    changes[k] = sent_label
 
-    # ----------------------------
-    # 2) Scan symbols for >=2 TF aligned (1H/4H/1D) STRONG 4/4 same direction
-    # ----------------------------
-    aligned_cards = []
+                    if messages_sent % 10 == 0:
+                        time.sleep(2)
 
-    for sym in SYMBOLS:
-        out = aligned_strong_min2(sym)   # <-- must exist (the >=2 TF function)
-        if not out:
-            continue
+                except Exception as e:
+                    logging.error("Failed to send alert for %s %s: %s", symbol, tf_label, e)
 
-        direction = out["direction"]           # "BUY" or "SELL"
-        aligned_tfs = out["aligned_tfs"]       # list like ["1h","4h"] or ["1h","4h","1d"]
-        tfs = out["tfs"]                       # dict with per-tf {"analysis","close_ms",...}
+            # Exits (only if previously strong)
+            elif prev and ("BUY|4|" in prev or "SELL|" in prev) and not is_strong:
+                if prev != sent_label:
+                    msg = (
+                        f"⚪ *{symbol}* ({tf_label}) — exited strong {prev.split('|')[0]} zone.\n"
+                        f"Now: {sig} ({a.get('bull_count',0)}/4 bull, {a.get('bear_count',0)}/4 bear)"
+                    )
+                    try:
+                        bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
+                        changes[k] = sent_label
+                    except Exception as e:
+                        logging.error("Failed to send exit message for %s %s: %s", symbol, tf_label, e)
 
-        # ----------------------------
-        # 3) Spam control: only alert on first / flip / 2->3 improvement
-        # ----------------------------
-        state_key = f"{sym}_ALIGNED_MIN2"
-        prev_state = LAST_SIGNALS.get(state_key)          # e.g. "BUY|2"
-        now_state = f"{direction}|{len(aligned_tfs)}"     # direction + aligned count
-
-        send_it = False
-        if not prev_state:
-            send_it = True
-        else:
-            parts = prev_state.split("|")
-            prev_dir = parts[0] if len(parts) > 0 else None
-            prev_n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-
-            if prev_dir != direction:
-                send_it = True
-            elif len(aligned_tfs) > prev_n:
-                send_it = True
-
-        if not send_it:
-            continue
-
-        # ----------------------------
-        # 4) Build message
-        #    Use 1H metrics if 1H is aligned; else use first aligned TF
-        # ----------------------------
-        base_tf = "1h" if "1h" in aligned_tfs else aligned_tfs[0]
-        base_a = tfs[base_tf]["analysis"]
-
-        time_lines = []
-        for tf in aligned_tfs:
-            close_ms = tfs[tf]["close_ms"]
-            close_str = datetime.fromtimestamp(close_ms / 1000, tz=manila_tz).strftime("%Y-%m-%d %I:%M %p")
-            time_lines.append(f"🕒 *{tf.upper()} strong candle close:* {close_str}")
-
-        msg = (
-            f"{'🟩' if direction=='BUY' else '🟥'} *{sym}* — *ALIGNED STRONG {direction} (>=2 TFs)*{volume_tag(sym)}\n"
-            f"✅ *Aligned TFs:* {', '.join([tf.upper() for tf in aligned_tfs])}\n\n"
-            f"✅ *Alignment ticked at (1H close):* {tick_close_str}\n\n"
-            + "\n".join(time_lines)
-            + f"\n\n💰 *Price ({base_tf.upper()} closed):* {base_a['price']:.4f}\n"
-        )
-
-        rsi = base_a.get("rsi")
-        msg += f"📊 *RSI ({base_tf.upper()}):* {rsi:.2f}\n" if isinstance(rsi, (int, float)) else f"📊 *RSI ({base_tf.upper()}):* N/A\n"
-        msg += f"🔗 [TradingView (1H)]({tradingview_link(sym, '1h')})\n\n"
-        msg += f"*{base_tf.upper()} Checklist*\n" + format_checklist(base_a)
-
-        aligned_cards.append(msg)
-
-        # Save state so it won't spam until flip or 2->3 improvement
-        LAST_SIGNALS[state_key] = now_state
-
-    # ----------------------------
-    # 5) Send in batches + persist
-    # ----------------------------
-    if aligned_cards:
-        batch_size = 5
-        for i in range(0, len(aligned_cards), batch_size):
-            batch = aligned_cards[i : i + batch_size]
-            header = f"📌 *AUTO /statusaligned (>=2 TFs)* — 1H close: {tick_close_str}\n\n"
-            text = header + "\n\n".join(batch)
-            try:
-                bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown", disable_web_page_preview=True)
-            except Exception as e:
-                logging.error("Failed to send aligned batch: %s", e)
-
+    if changes:
+        LAST_SIGNALS.update(changes)
         save_last_signals(LAST_SIGNALS)
-        logging.info("✅ Auto aligned scan sent %d alerts.", len(aligned_cards))
-    else:
-        logging.info("⚪ No aligned (>=2 TFs) strong signals on this 1H close.")
+        logging.info("✅ Scan complete. Sent %s alerts, saved %s signals.", messages_sent, len(changes))
+
+
+def heartbeat(context: CallbackContext):
+    try:
+        context.bot.send_message(chat_id=CHAT_ID, text="💓 Bot is alive")
+    except Exception:
+        pass
 
 
 # ================== MAIN ==================
@@ -737,7 +574,7 @@ def main():
     dp.add_handler(CommandHandler("statusaligned", cmd_statusaligned))
 
     jq = updater.job_queue
-    jq.run_repeating(check_and_alert, interval=30, first=10)
+    jq.run_repeating(check_and_alert, interval=300, first=10)
     jq.run_repeating(heartbeat, interval=14400, first=20)
     jq.run_repeating(refresh_pairs, interval=14400, first=60)
 
