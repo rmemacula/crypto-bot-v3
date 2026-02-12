@@ -722,6 +722,11 @@ def check_and_alert(context: CallbackContext):
     else:
         logging.info("⚪ No aligned (>=2 TFs) strong signals on this 1H close.")
 
+def heartbeat(context: CallbackContext):
+    try:
+        context.bot.send_message(chat_id=CHAT_ID, text="💓 Bot is alive")
+    except Exception:
+        pass
 
 # ================== MAIN ==================
 
