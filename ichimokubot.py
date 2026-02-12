@@ -704,31 +704,27 @@ def check_and_alert(context: CallbackContext):
         LAST_SIGNALS[state_key] = now_state
 
     # ----------------------------
-    # 5) Send in batches + persist
+    # 5) Send separate messages
     # ----------------------------
     if aligned_cards:
-    for msg in aligned_cards:
-        full_msg = (
-            f"📌 *AUTO /statusaligned (>=2 TFs)* — 1H close: {tick_close_str}\n\n"
-            + msg
-        )
-        try:
-            bot.send_message(
-                chat_id=CHAT_ID,
-                text=full_msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True,
+        for msg in aligned_cards:
+            full_msg = (
+                f"📌 *AUTO /statusaligned (>=2 TFs)* — 1H close: {tick_close_str}\n\n"
+                + msg
             )
-            time.sleep(0.5)  # small delay to avoid Telegram flood
-        except Exception as e:
-            logging.error("Failed to send aligned alert: %s", e)
-
-    save_last_signals(LAST_SIGNALS)
-    logging.info("✅ Sent %d separate aligned alerts.", len(aligned_cards))
-
+            try:
+                bot.send_message(
+                    chat_id=CHAT_ID,
+                    text=full_msg,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True,
+                )
+                time.sleep(0.5)  # prevent Telegram flood
+            except Exception as e:
+                logging.error("Failed to send aligned alert: %s", e)
 
         save_last_signals(LAST_SIGNALS)
-        logging.info("✅ Auto aligned scan sent %d alerts.", len(aligned_cards))
+        logging.info("✅ Sent %d separate aligned alerts.", len(aligned_cards))
     else:
         logging.info("⚪ No aligned (>=2 TFs) strong signals on this 1H close.")
 
