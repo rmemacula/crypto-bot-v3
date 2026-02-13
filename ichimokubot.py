@@ -493,11 +493,13 @@ def cmd_status(update, context):
         df = fetch_ohlcv(sym, interval)
         if df is None or len(df) < 104:
             continue
+
         a = analyze_df(df)
-   
-    funding_block = ""
-    if tf_label == "1h":  # show funding only once
-        funding_block = "\n" + format_funding_line(sym, notional_usdt=1000.0) + "\n"
+
+        # Funding shown once only (on 1H block)
+        funding_block = ""
+        if tf_label == "1h":
+            funding_block = "\n" + format_funding_line(sym, notional_usdt=1000.0) + "\n"
 
         msg = (
             f"📊 {sym} ({tf_label}){volume_tag(sym)}\n"
@@ -507,10 +509,15 @@ def cmd_status(update, context):
             f"{funding_block}"
             f"📈 [View on TradingView]({tradingview_link(sym, tf_label)})\n"
         )
+
         if a.get("sl") is not None and a.get("tp") is not None:
             msg += f"🎯 SL: {a['sl']:.4f} | TP: {a['tp']:.4f}\n"
+
         msg += "\n" + format_checklist(a)
         messages.append(msg)
+
+    if not messages:
+        return update.message.reply_text("No data returned (try again in a minute).")
 
     update.message.reply_text("\n\n".join(messages), parse_mode="Markdown", disable_web_page_preview=True)
 
