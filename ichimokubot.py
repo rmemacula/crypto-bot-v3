@@ -97,6 +97,52 @@ def fetch_ohlcv(symbol: str, interval: str, limit: int = 150) -> Optional[pd.Dat
     except Exception:
         return None
 
+def fetch_funding_info(symbol: str) -> Optional[dict]:
+    """
+    Binance USDT-M Futures funding info.
+    Returns: fundingRate (float), nextFundingTime (ms), markPrice (float)
+    """
+    url = "https://fapi.binance.com/fapi/v1/premiumIndex"
+    try:
+        r = requests.get(url, params={"symbol": symbol}, timeout=10)
+        r.raise_for_status()
+        j = r.json()
+
+        # lastFundingRate here represents the CURRENT funding rate for the upcoming funding time.
+        rate = float(j.get("lastFundingRate", 0.0))
+        next_time = int(j.get("nextFundingTime", 0))
+        mark = float(j.get("markPrice", 0.0))
+
+        if next_time <= 0:
+            return None
+
+        return {"rate": rate, "nextFundingTime": next_time, "markPrice": mark}
+    except Exception as e:
+        logging.error("Funding fetch failed for %s: %s", symbol, e)
+        return None
+
+
+def format_funding_line(symbol: str, notional_usdt: float = 1000.0) -> str:
+    """
+    Shows next funding rate/time + estimated fee for given notional.
+    Positive rate: longs pay shorts. Negative: shorts pay longs.
+    """
+    manila_tz = timezone(timedelta(hours=8))
+    info = fetch_funding_info(symbol)
+    if not info:
+        return "💸 Next Funding: N/A"
+
+    rate = info["rate"]
+    next_ts = datetime.fromtimestamp(info["nextFundingTime"] / 1000, tz=manila_tz).strftime("%Y-%m-%d %I:%M %p")
+    est_fee = notional_usdt * rate  # fee in USDT approx (based on notional)
+
+    side_note = "Longs pay" if rate > 0 else ("Shorts pay" if rate < 0 else "No funding")
+    return (
+        f"💸 Next Funding: {rate*100:.4f}% ({side_note})\n"
+        f"⏱️ Time: {next_ts}\n"
+        f"🧾 Est. fee: {est_fee:.4f} USDT per {notional_usdt:.0f} USDT notional"
+    )
+
 
 # ================== TECHNICALS ==================
 
@@ -448,11 +494,17 @@ def cmd_status(update, context):
         if df is None or len(df) < 104:
             continue
         a = analyze_df(df)
+   
+    funding_block = ""
+    if tf_label == "1h":  # show funding only once
+        funding_block = "\n" + format_funding_line(sym, notional_usdt=1000.0) + "\n"
+
         msg = (
             f"📊 {sym} ({tf_label}){volume_tag(sym)}\n"
             f"Signal: {a['signal']}\n"
             f"💰 Price: {a['price']:.4f} USDT\n"
             f"📊 RSI: {a['rsi']:.2f}\n"
+            f"{funding_block}"
             f"📈 [View on TradingView]({tradingview_link(sym, tf_label)})\n"
         )
         if a.get("sl") is not None and a.get("tp") is not None:
@@ -728,6 +780,89 @@ def check_and_alert(context: CallbackContext):
     else:
         logging.info("⚪ No aligned (>=2 TFs) strong signals on this 1H close.")
 
+def check_kijun_touch(context: CallbackContext):
+    """
+    KIJUN TOUCH (LIVE) JOB:
+    - Runs every 30s (intrabar)
+    - Only checks 1h and 4h
+    - Requires overall alignment (>=2 TFs out of 1h/4h/1d) in one direction
+    - Requires the TF being checked (1h or 4h) is STRONG 4/4 in that same direction
+    - Sends once per candle per TF per direction
+    """
+    global LAST_SIGNALS, SYMBOLS
+
+    bot = context.bot
+    manila_tz = timezone(timedelta(hours=8))
+
+    for sym in SYMBOLS:
+        # overall alignment (>=2 TFs)
+        out = aligned_strong_min2(sym)
+        if not out:
+            continue
+
+        direction = out["direction"]        # BUY or SELL
+        aligned_tfs = out["aligned_tfs"]    # e.g. ["1h","4h"] or ["1h","4h","1d"]
+
+        # We only fire kijun alerts on 1h/4h
+        for tf_label in ("1h", "4h"):
+            # Only if that TF is part of the aligned set
+            if tf_label not in aligned_tfs:
+                continue
+
+            df = fetch_ohlcv(sym, TIMEFRAMES[tf_label], limit=150)
+            if df is None or len(df) < 104:
+                continue
+
+            a = analyze_df(df)
+            sig = a.get("signal")
+
+            # Require THIS TF is strong 4/4 in the same direction
+            is_strong = (
+                (sig == "BUY" and a.get("bull_count", 0) == 4) or
+                (sig == "SELL" and a.get("bear_count", 0) == 4)
+            )
+            if not is_strong or sig != direction:
+                continue
+
+            kij = a.get("kijun_live")
+            if kij is None:
+                continue
+
+            # touch check on forming candle
+            touched = is_kijun_hit_intrabar(df, kij)
+            if not touched:
+                continue
+
+            candle_open_ms = candle_open_time_ms(df, closed=False)  # forming candle open
+            if candle_open_ms is None:
+                continue
+
+            # once per candle per direction
+            touch_state_key = kijun_touch_key(sym, tf_label, direction)
+            if LAST_SIGNALS.get(touch_state_key) == candle_open_ms:
+                continue
+
+            lp = live_price(df)
+            tv = tradingview_link(sym, tf_label)
+            ts = datetime.fromtimestamp(candle_open_ms / 1000, tz=manila_tz).strftime("%Y-%m-%d %I:%M %p")
+
+            msg = (
+                f"🎯 *KIJUN HIT* — *{sym}* ({tf_label.upper()}) — *{direction}* (Aligned: {', '.join([t.upper() for t in aligned_tfs])}){volume_tag(sym)}\n"
+                f"🕒 Candle Open: {ts}\n\n"
+                f"💰 *Live Price:* {lp:.4f}\n"
+                f"📏 *Kijun (live):* {kij:.4f}\n"
+                f"🔗 [View on TradingView]({tv})"
+            )
+
+            try:
+                bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown", disable_web_page_preview=True)
+                LAST_SIGNALS[touch_state_key] = candle_open_ms
+                save_last_signals(LAST_SIGNALS)
+                time.sleep(0.2)
+            except Exception as e:
+                logging.error("Failed to send Kijun touch for %s %s: %s", sym, tf_label, e)
+
+
 def heartbeat(context: CallbackContext):
     try:
         context.bot.send_message(chat_id=CHAT_ID, text="💓 Bot is alive")
@@ -746,11 +881,13 @@ def main():
     dp.add_handler(CommandHandler("status1w", cmd_status1w))
     dp.add_handler(CommandHandler("statusvolume", cmd_statusvolume))
     dp.add_handler(CommandHandler("statusaligned", cmd_statusaligned))
+    
 
     jq = updater.job_queue
     jq.run_repeating(check_and_alert, interval=30, first=10)
     jq.run_repeating(heartbeat, interval=14400, first=20)
     jq.run_repeating(refresh_pairs, interval=14400, first=60)
+    jq.run_repeating(check_kijun_touch, interval=30, first=15)
 
     updater.start_polling()
     updater.bot.send_message(chat_id=CHAT_ID, text="🚀 Ichimoku bot restarted and running!")
